@@ -1,52 +1,60 @@
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory = $true)]
-  [ValidateRange(1, 12)]
-  [int] $Month
+  [Parameter(Mandatory=$true)]
+  [String] $FromDate # In the format "yyyy-MM-dd"
 )
 
 . (Join-Path $PSScriptRoot common.ps1)
 
 $releaseHighlights = @{}
 
-$date = Get-Date -Month $month -Format "yyyy-MM"
-$date += "-\d\d"
+if ($FromDate -as [DateTime])
+{
+    $date = ([DateTime]$FromDate).ToString($CHANGELOG_DATE_FORMAT)
+}
+else {
+    LogWarning "Invalid date passed. Switch to using the current date"
+    $date = Get-Date -Format $CHANGELOG_DATE_FORMAT
+}
 
 $allPackageProps = Get-AllPkgProperties
 
-foreach ($packageProp in $allPackageProps)
-{
-  $changeLogLocation = $packageProp.ChangeLogPath
-  if (!(Test-Path $changeLogLocation))
-  {
-    continue
-  }
-  $changeLogEntries = Get-ChangeLogEntries -ChangeLogLocation $changeLogLocation
-  $packageName = $packageProp.Name
-  $serviceDirectory = $packageProp.ServiceDirectory
-
-  foreach ($changeLogEntry in $changeLogEntries.Values)
-  {
-    if ($changeLogEntry.ReleaseStatus -notmatch $date)
+foreach ($packageProp in $allPackageProps) {
+    $changeLogLocation = $packageProp.ChangeLogPath
+    if (!(Test-Path $changeLogLocation))
     {
-      continue;
+        continue
     }
+    $changeLogEntries = Get-ChangeLogEntries -ChangeLogLocation $changeLogLocation
+    $packageName = $packageProp.Name
+    $serviceDirectory = $packageProp.ServiceDirectory
 
-    $releaseVersion = $changeLogEntry.ReleaseVersion
-    $githubAnchor = $changeLogEntry.ReleaseTitle.Replace("## ", "").Replace(".", "").Replace("(", "").Replace(")", "").Replace(" ", "-")
+    foreach ($changeLogEntry in $changeLogEntries.Values) {
+        if ([System.String]::IsNullOrEmpty($changeLogEntry.ReleaseStatus))
+        {
+            continue;
+        }
+        $ReleaseStatus = $changeLogEntry.ReleaseStatus.Trim("(",")")
+        if (!($ReleaseStatus -as [DateTime]) -or $ReleaseStatus -lt $date)
+        {
+            continue;
+        }
 
-    $releaseTag = "${packageName}_${releaseVersion}"
-    $key = "${packageName}:${releaseVersion}"
+        $releaseVersion = $changeLogEntry.ReleaseVersion
+        $githubAnchor = $changeLogEntry.ReleaseTitle.Replace("## ", "").Replace(".", "").Replace("(", "").Replace(")", "").Replace(" ", "-")
 
-    $releaseHighlights[$key] = @{}
-    $releaseHighlights[$key]["PackageProperties"] = $packageProp
-    $releaseHighlights[$key]["ChangelogUrl"] = "https://github.com/Azure/azure-sdk-for-${LanguageShort}/blob/${releaseTag}/sdk/${serviceDirectory}/${packageName}/CHANGELOG.md#${githubAnchor}"
-    $releaseHighlights[$key]["Content"] = @()
+        $releaseTag = "${packageName}_${releaseVersion}"
+        $key = "${packageName}:${releaseVersion}"
 
-    $changeLogEntry.ReleaseContent | ForEach-Object {
-      $releaseHighlights[$key]["Content"] += $_.Replace("###", "####")
+        $releaseHighlights[$key] = @{}
+        $releaseHighlights[$key]["PackageProperties"] = $packageProp
+        $releaseHighlights[$key]["ChangelogUrl"] = "https://github.com/Azure/azure-sdk-for-${LanguageShort}/blob/${releaseTag}/sdk/${serviceDirectory}/${packageName}/CHANGELOG.md#${githubAnchor}"
+        $releaseHighlights[$key]["Content"] = @()
+
+        $changeLogEntry.ReleaseContent | %{
+            $releaseHighlights[$key]["Content"] += $_.Replace("###", "####")
+        }
     }
-  }
 }
 
 return $releaseHighlights
